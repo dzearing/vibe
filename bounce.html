@@ -55,7 +55,7 @@
       const MAX_DY            = 100;   // px range for accel mapping
       const MIN_ACCEL         = 0.2;   // acceleration factor for small wheel deltas
       const MAX_ACCEL         = 0.7;   // acceleration for large wheel deltas
-      const FRICTION_TRACKPAD = 0.90;  // friction for touch-driven inertia (closer to 1 = slower, longer glide)
+      const FRICTION_TRACKPAD = 0.90;  // friction for wheel-driven inertia
       const FRICTION_WHEEL    = 0.90;  // friction for wheel-driven inertia
       const MAX_OVERSHOOT     = 400;   // max overshoot px for wheel
       const TOUCH_OVERSHOOT   = 150;   // max overshoot px for touch
@@ -66,8 +66,9 @@
       const P_STOP            = 0.5;   // px threshold to snap
       const MAX_FLING_WHEEL   = 100;   // max vel clamp px/frame for wheel
       const MAX_FLING_TOUCH   = 300;   // max vel clamp px/frame for touch
-      const TOUCH_RELEASE_MULT = 2.0;   // multiplies velY on touch release
-      const FRICTION_TOUCH = 0.995; // friction for touch-driven inertia (closer to 1 = slower, longer glide)   // multiplies velY on touch release
+      const TOUCH_RELEASE_MULT= 2.0;   // multiplies velY on touch release
+      const FRICTION_TOUCH    = 0.995; // friction for touch-driven inertia (closer to 1 = slower, longer glide)
+      const TOUCH_MIN_SWIPE   = 5;     // px threshold below which touch won't start inertia
 
       let currentFriction = FRICTION_WHEEL;
 
@@ -197,7 +198,13 @@
         e.preventDefault();
         isDown = false;
         lastInput = 'touch';
-        // amplify touch release velocity
+        // ignore very small swipes
+        if (Math.abs(velY) < TOUCH_MIN_SWIPE) {
+          if (posY > maxY) finishSnap(maxY);
+          else if (posY < minY) finishSnap(minY);
+          return;
+        }
+        // amplify and start inertia
         velY *= TOUCH_RELEASE_MULT;
         currentFriction = FRICTION_TOUCH;
         state = 'scroll';
