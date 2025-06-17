@@ -3,151 +3,204 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Photo Grid with Soft, No-Overshoot Bounce</title>
+  <title>Spring Interrupt on Reverse</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0 }
     body, html { height: 100%; overflow: hidden }
     .photo-container {
-      position: relative; width: 100%; height: 100vh;
-      overflow: hidden; background: #111;
+      position: relative;
+      width: 100%; height: 100vh;
+      background: #111;
+      overflow: hidden;
+      touch-action: none;
+      overscroll-behavior: none;
     }
     .photo-grid {
       position: absolute; top: 0; left: 0; right: 0;
       display: grid;
-      grid-template-columns: repeat(auto-fill,minmax(120px,1fr));
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
       grid-auto-rows: 120px;
       gap: 6px;
       will-change: transform;
     }
     .photo-grid img {
       width: 100%; height: 100%;
-      object-fit: cover; border-radius: 4px; background: #222;
+      object-fit: cover;
+      border-radius: 4px;
+      background: #222;
     }
   </style>
 </head>
 <body>
-  <div class="photo-container" id="photo-container"></div>
+  <div id="photo-container" class="photo-container"></div>
   <script>
-  function createPhotoGrid(container, photoUrls) {
-    // Build the grid
-    const grid = document.createElement('div');
-    grid.className = 'photo-grid';
-    container.appendChild(grid);
-    photoUrls.forEach(src => {
-      const img = document.createElement('img');
-      img.src = src;
-      grid.appendChild(img);
-    });
+    function createPhotoGrid(container, photoUrls) {
+      // build grid
+      const grid = document.createElement('div');
+      grid.className = 'photo-grid';
+      container.appendChild(grid);
+      photoUrls.forEach(src => {
+        const img = document.createElement('img');
+        img.src = src;
+        grid.appendChild(img);
+      });
 
-    // State
-    let posY = 0, velY = 0;
-    let minY = 0, maxY = 0;
-    let animating = false;
-    let state = 'scroll';   // "scroll" or "spring"
-    let boundary = 0;
+      // state
+      let posY = 0, velY = 0, animating = false, state = 'idle', boundary = 0;
+      let minY = 0, maxY = 0;
 
-    // Tunables
-    const ACCEL         = 0.4;    // wheel → vel increment
-    const FRICTION      = 0.95;   // in-bounds bleed
-    const MAX_OVERSHOOT = 350;    // px rubber-band cap
+      // tuning constants
+      const LINE_HEIGHT       = 16;    // px per line unit (deltaMode=1). Larger → more scroll per "line" event
+      const MAX_DY            = 100;   // px range for accel mapping. Larger → curve spread over bigger deltas
+      const MIN_ACCEL         = 0.2;  // acceleration factor for tiny deltas. Smaller → gentler small scrolls
+      const MAX_ACCEL         = 0.7;   // accel for large deltas. Larger → stronger flings from big scrolls
+      const FRICTION_TRACKPAD = 0.90;  // friction for small deltas. Lower → quicker decay on trackpad swipes
+      const FRICTION_WHEEL    = 0.90;  // friction for large deltas. Higher → longer coasting on mouse wheel
+      const MAX_OVERSHOOT     = 400;   // max px stretch beyond edge. Larger → more rubber-band pull
+      const W                 = 0.0085;  // spring natural frequency. Smaller → slower, softer spring
+      const K                 = W * W; // spring stiffness
+      const C                 = 2 * W; // damping (2*W = critical). Higher → more overdamped, fewer oscillations
+      const V_STOP            = 0.2;   // velocity threshold to end scrolling. Lower → quicker stop
+      const P_STOP            = 0.5;   // px threshold to snap to boundary. Lower → more precise snap
+      const MAX_FLING         = 100;    // max vel clamp px/frame. Lower → limit top fling speed
 
-    // Critically-damped spring parameters:
-    //   W = natural frequency (lower → slower return)
-    //   K = W², C = 2·W
-    const W             = 0.08;   // try 0.08–0.15; lower = softer/slower
-    const K             = W * W;
-    const C             = 2 * W;
+      let currentFriction = FRICTION_WHEEL;
 
-    const V_STOP        = 0.1;    // vel threshold to finish
-    const P_STOP        = 1;      // px threshold to snap
+      function updateBounds() {
+        const Hc = container.clientHeight, Hg = grid.scrollHeight;
+        maxY = 0;
+        minY = Math.min(Hc - Hg, 0);
+      }
+      updateBounds();
+      window.addEventListener('resize', updateBounds);
 
-    // Helpers
-    function updateBounds() {
-      const Hc = container.clientHeight;
-      const Hg = grid.scrollHeight;
-      maxY = 0;
-      minY = Math.min(Hc - Hg, 0);
-    }
-    updateBounds();
-    window.addEventListener('resize', updateBounds);
-
-    function setY(y) {
-      grid.style.transform = `translateY(${y.toFixed(2)}px)`;
-    }
-
-    function finishSnap(to) {
-      // gentle ease-out to the exact boundary
-      grid.style.transition = 'transform 300ms ease-out';
-      posY = to; setY(posY);
-      grid.addEventListener('transitionend', () => {
-        grid.style.transition = '';
-      }, { once: true });
-      animating = false;
-    }
-
-    // Main loop
-    function loop() {
-      if (state === 'scroll') {
-        // inertia + friction
-        velY *= FRICTION;
-        posY += velY;
-        setY(posY);
-
-        // detect edge crossing
-        if (posY > maxY || posY < minY) {
-          boundary = posY > maxY ? maxY : minY;
-          state = 'spring';
-        }
-        // stop if slow and in bounds
-        else if (Math.abs(velY) < V_STOP) {
-          animating = false;
-          return;
-        }
-
-      } else { // spring state
-        // clamp extreme fling
-        if (posY > boundary + MAX_OVERSHOOT) {
-          posY = boundary + MAX_OVERSHOOT; velY = 0;
-        } else if (posY < boundary - MAX_OVERSHOOT) {
-          posY = boundary - MAX_OVERSHOOT; velY = 0;
-        }
-
-        // critically-damped spring: a = −K·over − C·vel
-        const over = posY - boundary;
-        const a = -K * over - C * velY;
-        velY += a;
-        posY += velY;
-        setY(posY);
-
-        // finish if nearly at rest AND near boundary
-        if (Math.abs(over) < P_STOP && Math.abs(velY) < V_STOP) {
-          return finishSnap(boundary);
-        }
+      function setY(y) {
+        grid.style.transform = `translateY(${y.toFixed(2)}px)`;
       }
 
-      requestAnimationFrame(loop);
-    }
+      function finishSnap(to) {
+        grid.style.transition = 'transform 200ms ease-out';
+        posY = to; setY(posY);
+        grid.addEventListener('transitionend', () => {
+          grid.style.transition = '';
+          animating = false;
+          state = 'idle';
+        }, { once: true });
+      }
 
-    // Wheel drives velocity; can interrupt spring at any time
-    container.addEventListener('wheel', e => {
-      e.preventDefault();
-      velY -= e.deltaY * ACCEL;
-      state = 'scroll';
-      if (!animating) {
-        animating = true;
+      function loop() {
+        if (state === 'scroll') {
+          velY *= currentFriction;
+          velY = Math.max(-MAX_FLING, Math.min(MAX_FLING, velY));
+          posY += velY;
+          setY(posY);
+
+          if (posY > maxY || posY < minY) {
+            boundary = posY > maxY ? maxY : minY;
+            // clamp pull distance
+            if (posY > boundary + MAX_OVERSHOOT) posY = boundary + MAX_OVERSHOOT;
+            else if (posY < boundary - MAX_OVERSHOOT) posY = boundary - MAX_OVERSHOOT;
+            velY = 0;
+            state = 'spring';
+          }
+          else if (Math.abs(velY) < V_STOP) {
+            animating = false;
+            state = 'idle';
+            return;
+          }
+
+        } else if (state === 'spring') {
+          const over = posY - boundary;
+          const a    = -K * over - C * velY;
+          velY += a;
+          posY += velY;
+          setY(posY);
+
+          if (Math.abs(over) < P_STOP && Math.abs(velY) < V_STOP) {
+            return finishSnap(boundary);
+          }
+        }
+
         requestAnimationFrame(loop);
       }
-    });
-  }
 
-  // Instantiate with 600 placeholders
-  const photos = Array.from({length:600}, () =>
-    `https://picsum.photos/seed/${Math.floor(Math.random()*1e6)}/200/200`
-  );
-  createPhotoGrid(
-    document.getElementById('photo-container'),
-    photos
-  );
+      function norm(val) {
+        return Math.min(Math.abs(val), MAX_DY) / MAX_DY;
+      }
+
+      // wheel handler with spring-interrupt logic
+      container.addEventListener('wheel', e => {
+        e.preventDefault();
+        // normalize deltaMode
+        const mult = e.deltaMode === 1 ? LINE_HEIGHT
+                   : e.deltaMode === 2 ? container.clientHeight
+                   : 1;
+        const dy = e.deltaY * mult;
+        const t  = norm(dy);
+
+        // if in spring, only interrupt on reverse direction
+        if (state === 'spring') {
+          const springDir = Math.sign(boundary - posY);
+          const wheelDir  = Math.sign(-dy);
+          if (wheelDir === springDir) {
+            return; // ignore same-direction wheels
+          }
+          // reverse direction → cancel spring
+          animating = false;
+          state = 'idle';
+        }
+
+        // blend accel & friction
+        const accel    = MIN_ACCEL + (MAX_ACCEL - MIN_ACCEL) * t;
+        currentFriction = FRICTION_TRACKPAD + (FRICTION_WHEEL - FRICTION_TRACKPAD) * t;
+
+        velY -= dy * accel;
+        state = 'scroll';
+
+        if (!animating) {
+          animating = true;
+          requestAnimationFrame(loop);
+        }
+      }, { passive: false });
+
+      // pointer (touch/drag) handler
+      let isDown = false, lastY = 0;
+      container.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        isDown = true; lastY = e.clientY;
+        animating = false; state = 'idle';
+      }, { passive: false });
+
+      container.addEventListener('pointermove', e => {
+        if (!isDown) return;
+        e.preventDefault();
+        const delta = e.clientY - lastY;
+        posY += delta; setY(posY);
+        velY = delta; lastY = e.clientY;
+      }, { passive: false });
+
+      container.addEventListener('pointerup', e => {
+        if (!isDown) return;
+        isDown = false;
+        if (Math.abs(velY) > 1) {
+          state = 'scroll';
+          animating = true;
+          requestAnimationFrame(loop);
+        } else {
+          if (posY > maxY) finishSnap(maxY);
+          else if (posY < minY) finishSnap(minY);
+        }
+      });
+    }
+
+    // demo instantiation
+    const photos = Array.from({ length: 600 }, () =>
+      `https://picsum.photos/seed/${Math.floor(Math.random() * 1e6)}/200/200`
+    );
+    createPhotoGrid(
+      document.getElementById('photo-container'),
+      photos
+    );
   </script>
 </body>
 </html>
