@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Spring Interrupt on Reverse (with Touch Enhancements)</title>
+  <title>Spring Interrupt on Reverse (Touch Decel Tuning)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0 }
     body, html { height: 100%; overflow: hidden }
@@ -51,22 +51,22 @@
       let lastInput = 'wheel';  // track whether last input was wheel or touch
 
       // tuning constants
-      const LINE_HEIGHT       = 16;    // px per line unit (deltaMode=1)
-      const MAX_DY            = 100;   // px range for accel mapping
-      const MIN_ACCEL         = 0.2;   // acceleration factor for small wheel deltas
-      const MAX_ACCEL         = 0.7;   // acceleration for large wheel deltas
-      const FRICTION_TRACKPAD = 0.90;  // friction for touch-driven inertia
-      const FRICTION_WHEEL    = 0.90;  // friction for wheel-driven inertia
-      const MAX_OVERSHOOT     = 400;   // max overshoot px for wheel
-      const TOUCH_OVERSHOOT   = 150;   // max overshoot px for touch
-      const W                 = 0.0085;// spring natural frequency (critical)
-      const K                 = W * W; // spring stiffness
-      const C                 = 2 * W; // damping (critical)
-      const V_STOP            = 0.2;   // velocity threshold to end scroll
-      const P_STOP            = 0.5;   // px threshold to snap
-      const MAX_FLING_WHEEL   = 100;   // max vel clamp px/frame for wheel
-      const MAX_FLING_TOUCH   = 300;   // max vel clamp px/frame for touch
-      const TOUCH_RELEASE_MULT= 2.0;   // multiplies velY on touch release
+      const LINE_HEIGHT        = 16;    // px per line unit (deltaMode=1)
+      const MAX_DY             = 100;   // px range for accel mapping
+      const MIN_ACCEL          = 0.2;   // accel factor small wheel deltas
+      const MAX_ACCEL          = 0.7;   // accel factor large wheel deltas
+      const FRICTION_TRACKPAD  = 0.97;  // friction for touch inertia (closer to 1 = slower decel)
+      const FRICTION_WHEEL     = 0.90;  // friction for wheel inertia
+      const MAX_OVERSHOOT      = 400;   // max overshoot px for wheel
+      const TOUCH_OVERSHOOT    = 150;   // max overshoot px for touch
+      const W                  = 0.0085;// spring natural frequency (critical)
+      const K                  = W * W; // spring stiffness
+      const C                  = 2 * W; // damping (critical)
+      const V_STOP             = 0.2;   // vel threshold to end scroll
+      const P_STOP             = 0.5;   // px threshold to snap
+      const MAX_FLING_WHEEL    = 100;   // max vel clamp px/frame wheel
+      const MAX_FLING_TOUCH    = 300;   // max vel clamp px/frame touch
+      const TOUCH_RELEASE_MULT = 3.0;   // multiplies velY on touch release (larger = longer glide)
 
       let currentFriction = FRICTION_WHEEL;
 
@@ -158,8 +158,8 @@
         }
 
         // blend accel & friction
-        const accel    = MIN_ACCEL + (MAX_ACCEL - MIN_ACCEL) * t;
-        currentFriction = FRICTION_TRACKPAD + (FRICTION_WHEEL - FRICTION_TRACKPAD) * t;
+        const accel         = MIN_ACCEL + (MAX_ACCEL - MIN_ACCEL) * t;
+        currentFriction     = FRICTION_TRACKPAD + (FRICTION_WHEEL - FRICTION_TRACKPAD) * t;
 
         velY -= dy * accel;
         state = 'scroll';
