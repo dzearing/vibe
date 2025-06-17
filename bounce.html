@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Photo Grid with Soft, No-Overshoot Bounce</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body, html { height: 100%; overflow: hidden }
+    .photo-container {
+      position: relative; width: 100%; height: 100vh;
+      overflow: hidden; background: #111;
+    }
+    .photo-grid {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill,minmax(120px,1fr));
+      grid-auto-rows: 120px;
+      gap: 6px;
+      will-change: transform;
+    }
+    .photo-grid img {
+      width: 100%; height: 100%;
+      object-fit: cover; border-radius: 4px; background: #222;
+    }
+  </style>
+</head>
+<body>
+  <div class="photo-container" id="photo-container"></div>
+  <script>
+  function createPhotoGrid(container, photoUrls) {
+    // Build the grid
+    const grid = document.createElement('div');
+    grid.className = 'photo-grid';
+    container.appendChild(grid);
+    photoUrls.forEach(src => {
+      const img = document.createElement('img');
+      img.src = src;
+      grid.appendChild(img);
+    });
+
+    // State
+    let posY = 0, velY = 0;
+    let minY = 0, maxY = 0;
+    let animating = false;
+    let state = 'scroll';   // "scroll" or "spring"
+    let boundary = 0;
+
+    // Tunables
+    const ACCEL         = 0.4;    // wheel → vel increment
+    const FRICTION      = 0.95;   // in-bounds bleed
+    const MAX_OVERSHOOT = 350;    // px rubber-band cap
+
+    // Critically-damped spring parameters:
+    //   W = natural frequency (lower → slower return)
+    //   K = W², C = 2·W
+    const W             = 0.08;   // try 0.08–0.15; lower = softer/slower
+    const K             = W * W;
+    const C             = 2 * W;
+
+    const V_STOP        = 0.1;    // vel threshold to finish
+    const P_STOP        = 1;      // px threshold to snap
+
+    // Helpers
+    function updateBounds() {
+      const Hc = container.clientHeight;
+      const Hg = grid.scrollHeight;
+      maxY = 0;
+      minY = Math.min(Hc - Hg, 0);
+    }
+    updateBounds();
+    window.addEventListener('resize', updateBounds);
+
+    function setY(y) {
+      grid.style.transform = `translateY(${y.toFixed(2)}px)`;
+    }
+
+    function finishSnap(to) {
+      // gentle ease-out to the exact boundary
+      grid.style.transition = 'transform 300ms ease-out';
+      posY = to; setY(posY);
+      grid.addEventListener('transitionend', () => {
+        grid.style.transition = '';
+      }, { once: true });
+      animating = false;
+    }
+
+    // Main loop
+    function loop() {
+      if (state === 'scroll') {
+        // inertia + friction
+        velY *= FRICTION;
+        posY += velY;
+        setY(posY);
+
+        // detect edge crossing
+        if (posY > maxY || posY < minY) {
+          boundary = posY > maxY ? maxY : minY;
+          state = 'spring';
+        }
+        // stop if slow and in bounds
+        else if (Math.abs(velY) < V_STOP) {
+          animating = false;
+          return;
+        }
+
+      } else { // spring state
+        // clamp extreme fling
+        if (posY > boundary + MAX_OVERSHOOT) {
+          posY = boundary + MAX_OVERSHOOT; velY = 0;
+        } else if (posY < boundary - MAX_OVERSHOOT) {
+          posY = boundary - MAX_OVERSHOOT; velY = 0;
+        }
+
+        // critically-damped spring: a = −K·over − C·vel
+        const over = posY - boundary;
+        const a = -K * over - C * velY;
+        velY += a;
+        posY += velY;
+        setY(posY);
+
+        // finish if nearly at rest AND near boundary
+        if (Math.abs(over) < P_STOP && Math.abs(velY) < V_STOP) {
+          return finishSnap(boundary);
+        }
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    // Wheel drives velocity; can interrupt spring at any time
+    container.addEventListener('wheel', e => {
+      e.preventDefault();
+      velY -= e.deltaY * ACCEL;
+      state = 'scroll';
+      if (!animating) {
+        animating = true;
+        requestAnimationFrame(loop);
+      }
+    });
+  }
+
+  // Instantiate with 600 placeholders
+  const photos = Array.from({length:600}, () =>
+    `https://picsum.photos/seed/${Math.floor(Math.random()*1e6)}/200/200`
+  );
+  createPhotoGrid(
+    document.getElementById('photo-container'),
+    photos
+  );
+  </script>
+</body>
+</html>
