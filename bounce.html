@@ -184,6 +184,7 @@
         lastY = e.clientY;
         animating = false;
         state = 'idle';
+        velY = 0;   // reset velocity to avoid carry-over on new touch
       }, { passive: false });
 
       container.addEventListener('pointermove', e => {
