@@ -179,18 +179,16 @@
         velY = delta; lastY = e.clientY;
       }, { passive: false });
 
+      // pointer up: kick off physics for touch, using trackpad friction
       container.addEventListener('pointerup', e => {
         if (!isDown) return;
         isDown = false;
-        if (Math.abs(velY) > 1) {
-          state = 'scroll';
-          animating = true;
-          requestAnimationFrame(loop);
-        } else {
-          if (posY > maxY) finishSnap(maxY);
-          else if (posY < minY) finishSnap(minY);
-        }
-      });
+        // always enter inertial scroll on touch release
+        currentFriction = FRICTION_TRACKPAD;
+        state = 'scroll';
+        animating = true;
+        requestAnimationFrame(loop);
+      }, { passive: false });
     }
 
     // demo instantiation
