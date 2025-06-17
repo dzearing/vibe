@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>iPhone-Like Momentum Scroll</title>
+  <title>Spring Interrupt on Reverse (with Touch Enhancements)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0 }
     body, html { height: 100%; overflow: hidden }
@@ -37,116 +37,182 @@
     function createPhotoGrid(container, photoUrls) {
       // build grid
       const grid = document.createElement('div');
-      grid.className = 'photo-grid'; container.appendChild(grid);
-      photoUrls.forEach(src => { const img = document.createElement('img'); img.src = src; grid.appendChild(img); });
+      grid.className = 'photo-grid';
+      container.appendChild(grid);
+      photoUrls.forEach(src => {
+        const img = document.createElement('img');
+        img.src = src;
+        grid.appendChild(img);
+      });
 
       // state
-      let posY = 0, velY = 0, animating = false, state = 'idle';
-      let boundary = 0, minY = 0, maxY = 0;
-      let lastInput = 'wheel'; // track last input type
+      let posY = 0, velY = 0, animating = false, state = 'idle', boundary = 0;
+      let minY = 0, maxY = 0;
+      let lastInput = 'wheel';  // track whether last input was wheel or touch
 
       // tuning constants
-      const LINE_HEIGHT       = 16;      // px per line unit (deltaMode=1)
-      const MAX_DY            = 100;     // px range for accel mapping
-      const MIN_ACCEL         = 0.1;     // min accel for small deltas
-      const MAX_ACCEL         = 0.7;     // max accel for large deltas
-      const FRICTION_TRACKPAD = 0.92;    // high friction for touch
-      const FRICTION_WHEEL    = 0.96;    // slightly lower friction for wheel
-      const MAX_OVERSHOOT     = 400;     // px bounce for wheel
-      const TOUCH_OVERSHOOT   = 50;      // smaller bounce for touch
-      const W_WHEEL           = 0.02;    // spring freq for wheel bounce
-      const C_WHEEL           = 2 * W_WHEEL;  // critical damping wheel
-      const W_TOUCH           = 0.005;   // slower spring freq touch
-      const C_TOUCH           = 5 * W_TOUCH;  // overdamped touch (no jiggle)
-      const V_STOP            = 0.2;     // stop velocity
-      const P_STOP            = 0.5;     // snap threshold
-      const MAX_FLING         = 100;     // clamp fling speed
+      const LINE_HEIGHT       = 16;    // px per line unit (deltaMode=1)
+      const MAX_DY            = 100;   // px range for accel mapping
+      const MIN_ACCEL         = 0.2;   // acceleration factor for small wheel deltas
+      const MAX_ACCEL         = 0.7;   // acceleration for large wheel deltas
+      const FRICTION_TRACKPAD = 0.90;  // friction for touch-driven inertia
+      const FRICTION_WHEEL    = 0.90;  // friction for wheel-driven inertia
+      const MAX_OVERSHOOT     = 400;   // max overshoot px for wheel
+      const TOUCH_OVERSHOOT   = 150;   // max overshoot px for touch
+      const W                 = 0.0085;// spring natural frequency (critical)
+      const K                 = W * W; // spring stiffness
+      const C                 = 2 * W; // damping (critical)
+      const V_STOP            = 0.2;   // velocity threshold to end scroll
+      const P_STOP            = 0.5;   // px threshold to snap
+      const MAX_FLING_WHEEL   = 100;   // max vel clamp px/frame for wheel
+      const MAX_FLING_TOUCH   = 300;   // max vel clamp px/frame for touch
+      const TOUCH_RELEASE_MULT= 2.0;   // multiplies velY on touch release
 
       let currentFriction = FRICTION_WHEEL;
 
       function updateBounds() {
         const Hc = container.clientHeight, Hg = grid.scrollHeight;
-        maxY = 0; minY = Math.min(Hc - Hg, 0);
+        maxY = 0;
+        minY = Math.min(Hc - Hg, 0);
       }
-      updateBounds(); window.addEventListener('resize', updateBounds);
+      updateBounds();
+      window.addEventListener('resize', updateBounds);
 
-      function setY(y) { grid.style.transform = `translateY(${y.toFixed(2)}px)`; }
+      function setY(y) {
+        grid.style.transform = `translateY(${y.toFixed(2)}px)`;
+      }
+
       function finishSnap(to) {
-        grid.style.transition = 'transform 200ms ease-out'; posY = to; setY(posY);
-        grid.addEventListener('transitionend', () => { grid.style.transition = ''; animating = false; state = 'idle'; }, { once: true });
+        grid.style.transition = 'transform 200ms ease-out';
+        posY = to;
+        setY(posY);
+        grid.addEventListener('transitionend', () => {
+          grid.style.transition = '';
+          animating = false;
+          state = 'idle';
+        }, { once: true });
       }
 
       function loop() {
-        // choose spring/overshoot settings by input
-        const isTouch = lastInput === 'touch';
-        const overshootLimit = isTouch ? TOUCH_OVERSHOOT : MAX_OVERSHOOT;
-        const W = isTouch ? W_TOUCH : W_WHEEL;
-        const C = isTouch ? C_TOUCH : C_WHEEL;
-        const K = W * W;
+        // choose overshoot and fling limits by input type
+        const overshootLimit = lastInput === 'touch' ? TOUCH_OVERSHOOT : MAX_OVERSHOOT;
+        const flingLimit     = lastInput === 'touch' ? MAX_FLING_TOUCH : MAX_FLING_WHEEL;
 
         if (state === 'scroll') {
+          // apply friction and clamp velocity
           velY *= currentFriction;
-          velY = Math.max(-MAX_FLING, Math.min(MAX_FLING, velY));
-          posY += velY; setY(posY);
-          // boundary?
+          velY = Math.max(-flingLimit, Math.min(flingLimit, velY));
+          posY += velY;
+          setY(posY);
+
+          // boundary check
           if (posY > maxY || posY < minY) {
             boundary = posY > maxY ? maxY : minY;
-            // clamp overshoot
-            const over = posY - boundary;
-            if (Math.abs(over) > overshootLimit) posY = boundary + Math.sign(over) * overshootLimit;
+            // clamp pull distance
+            if (posY > boundary + overshootLimit) posY = boundary + overshootLimit;
+            else if (posY < boundary - overshootLimit) posY = boundary - overshootLimit;
             velY = 0;
             state = 'spring';
-          } else if (Math.abs(velY) < V_STOP) {
-            animating = false; state = 'idle'; return;
           }
+          else if (Math.abs(velY) < V_STOP) {
+            animating = false;
+            state = 'idle';
+            return;
+          }
+
         } else if (state === 'spring') {
           const over = posY - boundary;
-          const a = -K * over - C * velY;
-          velY += a; posY += velY; setY(posY);
+          const a    = -K * over - C * velY;
+          velY += a;
+          posY += velY;
+          setY(posY);
+
           if (Math.abs(over) < P_STOP && Math.abs(velY) < V_STOP) {
             return finishSnap(boundary);
           }
         }
+
         requestAnimationFrame(loop);
       }
 
-      function norm(v) { return Math.min(Math.abs(v), MAX_DY) / MAX_DY; }
+      function norm(val) {
+        return Math.min(Math.abs(val), MAX_DY) / MAX_DY;
+      }
 
-      // wheel handler
+      // wheel handler with spring-interrupt logic
       container.addEventListener('wheel', e => {
-        e.preventDefault(); lastInput = 'wheel';
-        const mult = e.deltaMode === 1 ? LINE_HEIGHT : e.deltaMode === 2 ? container.clientHeight : 1;
-        const dy = e.deltaY * mult, t = norm(dy);
-        // interrupt spring only on reverse
+        lastInput = 'wheel';
+        e.preventDefault();
+        const mult = e.deltaMode === 1 ? LINE_HEIGHT
+                   : e.deltaMode === 2 ? container.clientHeight
+                   : 1;
+        const dy = e.deltaY * mult;
+        const t  = norm(dy);
+
         if (state === 'spring') {
-          const springDir = Math.sign(boundary - posY), wheelDir = Math.sign(-dy);
+          const springDir = Math.sign(boundary - posY);
+          const wheelDir  = Math.sign(-dy);
           if (wheelDir === springDir) return;
-          animating = false; state = 'idle';
+          animating = false;
+          state = 'idle';
         }
-        const accel = MIN_ACCEL + (MAX_ACCEL - MIN_ACCEL) * t;
+
+        // blend accel & friction
+        const accel    = MIN_ACCEL + (MAX_ACCEL - MIN_ACCEL) * t;
         currentFriction = FRICTION_TRACKPAD + (FRICTION_WHEEL - FRICTION_TRACKPAD) * t;
-        velY -= dy * accel; state = 'scroll';
-        if (!animating) { animating = true; requestAnimationFrame(loop); }
+
+        velY -= dy * accel;
+        state = 'scroll';
+
+        if (!animating) {
+          animating = true;
+          requestAnimationFrame(loop);
+        }
       }, { passive: false });
 
-      // pointer (touch) handlers
+      // pointer (touch/drag) handlers
       let isDown = false, lastY = 0;
-      container.addEventListener('pointerdown', e => { e.preventDefault(); isDown = true; lastY = e.clientY; animating = false; state = 'idle'; }, { passive: false });
-      container.addEventListener('pointermove', e => {
-        if (!isDown) return; e.preventDefault();
-        const d = e.clientY - lastY; posY += d; setY(posY); velY = d; lastY = e.clientY;
+      container.addEventListener('pointerdown', e => {
+        lastInput = 'touch';
+        e.preventDefault();
+        isDown = true;
+        lastY = e.clientY;
+        animating = false;
+        state = 'idle';
       }, { passive: false });
+
+      container.addEventListener('pointermove', e => {
+        if (!isDown) return;
+        e.preventDefault();
+        const delta = e.clientY - lastY;
+        posY += delta;
+        setY(posY);
+        velY = delta;
+        lastY = e.clientY;
+      }, { passive: false });
+
       container.addEventListener('pointerup', e => {
-        if (!isDown) return; isDown = false; lastInput = 'touch';
+        if (!isDown) return;
+        e.preventDefault();
+        isDown = false;
+        lastInput = 'touch';
+        // amplify touch release velocity
+        velY *= TOUCH_RELEASE_MULT;
         currentFriction = FRICTION_TRACKPAD;
-        state = 'scroll'; animating = true;
+        state = 'scroll';
+        animating = true;
         requestAnimationFrame(loop);
       }, { passive: false });
     }
 
-    // instantiate demo
-    const photos = Array.from({ length: 600 }, () => `https://picsum.photos/seed/${Math.floor(Math.random() * 1e6)}/200/200`);
-    createPhotoGrid(document.getElementById('photo-container'), photos);
+    // demo instantiation
+    const photos = Array.from({ length: 600 }, () =>
+      `https://picsum.photos/seed/${Math.floor(Math.random() * 1e6)}/200/200`
+    );
+    createPhotoGrid(
+      document.getElementById('photo-container'),
+      photos
+    );
   </script>
 </body>
 </html>
