@@ -70,7 +70,7 @@
       const FRICTION_TOUCH    = 0.995; // friction for touch-driven inertia (closer to 1 = slower, longer glide)
       const TOUCH_MIN_SWIPE   = 5;     // px threshold below which touch won't start inertia
 
-      let currentFriction = FRICTION_WHEEL;
+      let currentFriction = FRICTION_WHEEL;  // initialize with wheel friction
 
       function updateBounds() {
         const Hc = container.clientHeight, Hg = grid.scrollHeight;
@@ -96,6 +96,9 @@
       }
 
       function loop() {
+        // stop scheduling if animation flag is false
+        if (!animating) return;
+
         // choose overshoot and fling limits by input type
         const overshootLimit = lastInput === 'touch' ? TOUCH_OVERSHOOT : MAX_OVERSHOOT;
         const flingLimit     = lastInput === 'touch' ? MAX_FLING_TOUCH : MAX_FLING_WHEEL;
@@ -110,9 +113,8 @@
           // boundary check
           if (posY > maxY || posY < minY) {
             boundary = posY > maxY ? maxY : minY;
-            // clamp pull distance
-            if (posY > boundary + overshootLimit) posY = boundary + overshootLimit;
-            else if (posY < boundary - overshootLimit) posY = boundary - overshootLimit;
+            const over = posY - boundary;
+            if (Math.abs(over) > overshootLimit) posY = boundary + Math.sign(over) * overshootLimit;
             velY = 0;
             state = 'spring';
           }
@@ -130,6 +132,7 @@
           setY(posY);
 
           if (Math.abs(over) < P_STOP && Math.abs(velY) < V_STOP) {
+            animating = false;  // stop animating before snapping
             return finishSnap(boundary);
           }
         }
